@@ -420,5 +420,21 @@ func syncOneRepo(ctx context.Context, repo *cache.RepoCache, repoPath string) (i
 			return bugs, ids, nil
 		}
 	}
+
+	// CI metrics ingestion: pull the last N workflow runs on the
+	// default branch and record per-job timings as metric series.
+	// Idempotent (tracked by last-seen run id in local config), so
+	// the second call after a fresh sync is mostly a no-op. Errors
+	// are swallowed — missing metrics shouldn't fail the sync.
+	_ = github.SyncWorkflowMetrics(ctx, repo, workflowRunsPerSync)
+
 	return bugs, ids, nil
 }
+
+// workflowRunsPerSync caps how many workflow runs we pull per call.
+// 20 is generous enough that a CI-heavy trunk branch stays caught up
+// between syncs (typical rate: ~10 runs/hr at peak), and small enough
+// that one sync doesn't burn through the API budget. Tracked runs
+// live in local config as the highest-seen run id, so increasing this
+// only affects the first sync after a long gap.
+const workflowRunsPerSync = 20
