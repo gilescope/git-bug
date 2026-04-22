@@ -1,5 +1,7 @@
 import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import TextField from '@mui/material/TextField';
@@ -48,6 +50,51 @@ type Detail = {
   retired?: boolean;
   points: Point[];
 };
+
+// ChartRow is the per-point shape we feed to recharts: numeric x/y
+// plus the metadata we want available in dot renderers and the
+// tooltip. Kept narrow on purpose — every field here is rendered.
+type ChartRow = {
+  t: number;
+  v: number;
+  concl?: string;
+  jobUrl?: string;
+};
+
+// hasConcl reports whether any row carries a `concl` attr — the
+// signal we use to decide whether to render the pass/fail legend.
+// User-recorded series (e.g. test durations from a JUnit importer)
+// won't have it, so the legend would be misleading.
+function hasConcl(rows: ChartRow[]): boolean {
+  for (const r of rows) {
+    if (r.concl) return true;
+  }
+  return false;
+}
+
+// dotColorFor maps a workflow-job conclusion to a chart colour.
+// Conventions follow the existing pass/fail palette used in
+// PrDiff (#2da44e green, #cf222e red); cancelled / skipped get a
+// muted grey so they don't compete with the real signal. Unknown
+// concl (e.g. user-recorded series with no `concl` attr) falls
+// back to the neutral line colour so the dot is still visible.
+function dotColorFor(concl?: string): string {
+  switch (concl) {
+    case 'success':
+      return '#2da44e';
+    case 'failure':
+    case 'timed_out':
+      return '#cf222e';
+    case 'cancelled':
+    case 'skipped':
+    case 'neutral':
+      return '#8c959f';
+    case 'action_required':
+      return '#bf8700';
+    default:
+      return '#57606a';
+  }
+}
 
 type Range = '7d' | '30d' | '90d' | '365d' | 'all';
 
@@ -139,6 +186,23 @@ const useStyles = makeStyles((theme) => ({
     fontStyle: 'italic',
     padding: theme.spacing(1),
   },
+  legend: {
+    display: 'flex',
+    gap: theme.spacing(1),
+    marginTop: theme.spacing(0.5),
+    paddingLeft: theme.spacing(7),
+    fontSize: '0.7rem',
+    color: theme.palette.text.secondary,
+    alignItems: 'center',
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    display: 'inline-block',
+    marginRight: 4,
+    verticalAlign: 'middle',
+  },
 }));
 
 /** MetricsPage lists all locally-known metric series for a repo and
@@ -152,6 +216,11 @@ export default function MetricsPage() {
   const [error, setError] = useState<string | null>(null);
   const [match, setMatch] = useState('');
   const [range, setRange] = useState<Range>('30d');
+  // ci.job.status is now visualised as the dot colour on the
+  // matching ci.job.duration chart, so listing it as its own series
+  // would just clutter the page. Hidden by default, opt-in via the
+  // "show status series" checkbox for users who want raw access.
+  const [showStatusSeries, setShowStatusSeries] = useState(false);
   // reloadTick is bumped on focus / Refresh; its value is part of the
   // useEffect deps so every increment forces a re-fetch. We don't
   // care about the numeric value, only that it changed.
@@ -189,10 +258,17 @@ export default function MetricsPage() {
 
   const filtered = useMemo(() => {
     if (!entries) return [];
+    let xs = entries;
+    if (!showStatusSeries) {
+      // ci.job.status is visualised via dot colour on ci.job.duration;
+      // listing it separately is duplication. The toggle keeps it
+      // accessible for anyone who wants the raw number.
+      xs = xs.filter((e) => e.name !== 'ci.job.status');
+    }
     const q = match.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((e) => e.labelKey.toLowerCase().includes(q));
-  }, [entries, match]);
+    if (q) xs = xs.filter((e) => e.labelKey.toLowerCase().includes(q));
+    return xs;
+  }, [entries, match, showStatusSeries]);
 
   if (error) return <div className={classes.error}>⚠ {error}</div>;
   if (!entries) return <div className={classes.empty}>Loading metrics…</div>;
@@ -234,6 +310,17 @@ export default function MetricsPage() {
           <MenuItem value="365d">Last 365 days</MenuItem>
           <MenuItem value="all">All time</MenuItem>
         </Select>
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={showStatusSeries}
+              onChange={(e) => setShowStatusSeries(e.target.checked)}
+            />
+          }
+          label="show status series"
+          slotProps={{ typography: { fontSize: '0.85rem' } }}
+        />
       </div>
 
       {filtered.length === 0 && (
@@ -301,9 +388,16 @@ function SeriesCard({
 
   // Recharts wants numeric x — epoch ms is the standard choice; we
   // format back to a date label inside the Tooltip / XAxis formatter.
+  // We also carry `concl` + `jobUrl` onto the row so the per-dot
+  // renderer can colour by pass/fail and wire the click-through.
   const data = useMemo(() => {
     if (!detail) return [];
-    return detail.points.map((p) => ({ t: Date.parse(p.time), v: p.value }));
+    return detail.points.map((p) => ({
+      t: Date.parse(p.time),
+      v: p.value,
+      concl: p.attrs?.concl,
+      jobUrl: p.attrs?.jobUrl,
+    }));
   }, [detail]);
 
   return (
@@ -330,6 +424,14 @@ function SeriesCard({
       {!loading && data.length === 0 && (
         <div className={classes.loadingChart}>no points in range</div>
       )}
+      {!loading && data.length > 0 && hasConcl(data) && (
+        <div className={classes.legend}>
+          <span><span className={classes.legendDot} style={{ background: dotColorFor('success') }} />pass</span>
+          <span><span className={classes.legendDot} style={{ background: dotColorFor('failure') }} />fail</span>
+          <span><span className={classes.legendDot} style={{ background: dotColorFor('cancelled') }} />cancelled / skipped</span>
+          <span style={{ marginLeft: 8, fontStyle: 'italic' }}>(click a dot to open the run on github)</span>
+        </div>
+      )}
       {!loading && data.length > 0 && (
         <div className={classes.chart}>
           <ResponsiveContainer>
@@ -352,14 +454,25 @@ function SeriesCard({
               />
               <Tooltip
                 labelFormatter={(v) => new Date(v as number).toISOString()}
-                formatter={(v) => formatValue(Number(v), entry.unit)}
+                formatter={(v, _name, item) => {
+                  // Surface the conclusion in the tooltip so the
+                  // colour-coded dot isn't the only signal; hover
+                  // reads "12.3 s (failure)".
+                  const row: ChartRow | undefined = item?.payload;
+                  const suffix = row?.concl ? ` (${row.concl})` : '';
+                  return formatValue(Number(v), entry.unit) + suffix;
+                }}
               />
               <Line
                 type="monotone"
                 dataKey="v"
-                stroke="#2da44e"
-                strokeWidth={2}
-                dot={false}
+                // Neutral stroke — the colour signal lives on the dots,
+                // so a coloured line would double-encode the wrong thing
+                // (what colour for a line connecting a pass and a fail?).
+                stroke="#8c959f"
+                strokeWidth={1.5}
+                dot={<StatusDot />}
+                activeDot={<StatusDot active />}
                 isAnimationActive={false}
               />
             </LineChart>
@@ -368,6 +481,47 @@ function SeriesCard({
       )}
     </div>
   );
+}
+
+// StatusDot is a per-point renderer for recharts <Line dot={...}>.
+// recharts passes cx/cy/payload via cloneElement, hence the loose
+// `props: any` — recharts' types for these are notoriously incomplete
+// and trying to thread a tighter shape through fights the library
+// without buying us anything. The render contract is documented at
+// https://recharts.org/en-US/api/Line#dot.
+function StatusDot(props: any) {
+  const { cx, cy, payload, active } = props;
+  if (cx == null || cy == null) return null;
+  const row: ChartRow = payload;
+  const fill = dotColorFor(row?.concl);
+  // active=true is recharts' "you're hovered" hook; bump radius so
+  // the user has obvious feedback. jobUrl makes the dot actionable
+  // when set — the wrapping <a> works in SVG via xlink, and recharts
+  // handles the click before the line layer steals it.
+  const r = active ? 5 : 3;
+  const circle = (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={r}
+      fill={fill}
+      stroke="#fff"
+      strokeWidth={1}
+      style={{ cursor: row?.jobUrl ? 'pointer' : 'default' }}
+    />
+  );
+  if (row?.jobUrl) {
+    return (
+      <a
+        href={row.jobUrl}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {circle}
+      </a>
+    );
+  }
+  return circle;
 }
 
 // Axis label: coarse for long ranges, fine for short ones. Saves
