@@ -54,12 +54,40 @@ type Detail = {
 // ChartRow is the per-point shape we feed to recharts: numeric x/y
 // plus the metadata we want available in dot renderers and the
 // tooltip. Kept narrow on purpose — every field here is rendered.
+//
+// vLine and vOff split `v` along the trend axis: vLine is set when
+// the point should pull the trend line (pass / fail / timed_out),
+// vOff is set otherwise (cancelled, skipped, neutral, action_required).
+// recharts skips null values when drawing a line, so feeding two
+// separate `<Line>` series with these keys lets us draw a clean
+// trend line through the meaningful points while still showing the
+// off-trend dots as visible markers — without them yanking the line
+// through arbitrary durations (a cancelled run can finish in 2 s).
 type ChartRow = {
   t: number;
   v: number;
+  vLine: number | null;
+  vOff: number | null;
   concl?: string;
   jobUrl?: string;
 };
+
+// isLineWorthy decides which conclusions count toward the trend line.
+// Real outcomes (success / failure / timed_out) do; runs that didn't
+// produce a meaningful duration (cancelled, skipped, neutral, anything
+// requiring user action) don't. Unknown conclusions default to "yes"
+// because user-recorded series have no concl at all and need to draw.
+function isLineWorthy(concl?: string): boolean {
+  switch (concl) {
+    case 'cancelled':
+    case 'skipped':
+    case 'neutral':
+    case 'action_required':
+      return false;
+    default:
+      return true;
+  }
+}
 
 // hasConcl reports whether any row carries a `concl` attr — the
 // signal we use to decide whether to render the pass/fail legend.
@@ -492,14 +520,21 @@ function SeriesCard({
   // format back to a date label inside the Tooltip / XAxis formatter.
   // We also carry `concl` + `jobUrl` onto the row so the per-dot
   // renderer can colour by pass/fail and wire the click-through.
-  const data = useMemo(() => {
+  const data = useMemo<ChartRow[]>(() => {
     if (!detail) return [];
-    return detail.points.map((p) => ({
-      t: Date.parse(p.time),
-      v: p.value,
-      concl: p.attrs?.concl,
-      jobUrl: p.attrs?.jobUrl,
-    }));
+    return detail.points.map((p) => {
+      const v = p.value;
+      const concl = p.attrs?.concl;
+      const include = isLineWorthy(concl);
+      return {
+        t: Date.parse(p.time),
+        v,
+        vLine: include ? v : null,
+        vOff: include ? null : v,
+        concl,
+        jobUrl: p.attrs?.jobUrl,
+      };
+    });
   }, [detail]);
 
   return (
@@ -556,26 +591,48 @@ function SeriesCard({
               />
               <Tooltip
                 labelFormatter={(v) => new Date(v as number).toISOString()}
+                // The chart has two <Line>s sharing each row (vLine
+                // and vOff) — exactly one is non-null per row, so
+                // filtering nulls collapses the tooltip back to a
+                // single entry per timestamp without us having to
+                // know which series fed it.
                 formatter={(v, _name, item) => {
-                  // Surface the conclusion in the tooltip so the
-                  // colour-coded dot isn't the only signal; hover
-                  // reads "12.3 s (failure)".
+                  if (v == null) return null as any;
                   const row: ChartRow | undefined = item?.payload;
                   const suffix = row?.concl ? ` (${row.concl})` : '';
-                  return formatValue(Number(v), entry.unit) + suffix;
+                  return [formatValue(Number(v), entry.unit) + suffix, ''];
                 }}
               />
               <Line
                 type="monotone"
-                dataKey="v"
+                dataKey="vLine"
                 // Neutral stroke — the colour signal lives on the dots,
                 // so a coloured line would double-encode the wrong thing
                 // (what colour for a line connecting a pass and a fail?).
                 stroke="#8c959f"
                 strokeWidth={1.5}
+                // connectNulls=false (recharts default) — the line
+                // breaks across cancelled/skipped points so they don't
+                // pull the trend through a meaningless duration.
                 dot={<StatusDot />}
                 activeDot={<StatusDot active />}
                 isAnimationActive={false}
+              />
+              {/*
+                Off-trend line: cancelled / skipped points carry vOff
+                instead of vLine. stroke="none" so this layer draws
+                only the markers — no segment connects them — which
+                is what lets the user still see "this run happened"
+                without it warping the trend.
+              */}
+              <Line
+                type="monotone"
+                dataKey="vOff"
+                stroke="none"
+                dot={<StatusDot />}
+                activeDot={<StatusDot active />}
+                isAnimationActive={false}
+                legendType="none"
               />
             </LineChart>
           </ResponsiveContainer>
