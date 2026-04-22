@@ -148,9 +148,16 @@ func fetchDefaultBranch(ctx context.Context, client *http.Client, owner, project
 
 // workflowRun is the subset of GitHub's workflow-run schema we care
 // about. Full schema is huge and mostly irrelevant for metrics.
+//
+// `Path` is the workflow file path (e.g. `.github/workflows/ci.yml`)
+// and is the STABLE identifier across runs. `Name` is the rendered
+// display name, which can be dynamic — some workflows use
+// `name: ${{ github.event.head_commit.message }}`, producing a new
+// string every run — so we don't use it for series identity.
 type workflowRun struct {
 	Id          int64     `json:"id"`
 	Name        string    `json:"name"`
+	Path        string    `json:"path"`
 	HeadSha     string    `json:"head_sha"`
 	HeadBranch  string    `json:"head_branch"`
 	Status      string    `json:"status"`     // queued | in_progress | completed
@@ -219,9 +226,12 @@ func ingestRunJobs(ctx context.Context, client *http.Client, metrics *cache.Repo
 		return err
 	}
 
-	workflowName := run.Name
-	if workflowName == "" {
-		workflowName = "workflow-" + strconv.FormatInt(run.WorkflowId, 10)
+	// Stable identity: use the workflow *file path* (or numeric id as
+	// a fallback) — these don't change across runs. Display name goes
+	// on attrs so the UI can still show a human label.
+	workflowKey := run.Path
+	if workflowKey == "" {
+		workflowKey = "workflow-" + strconv.FormatInt(run.WorkflowId, 10)
 	}
 
 	for _, job := range jobs {
@@ -235,18 +245,19 @@ func ingestRunJobs(ctx context.Context, client *http.Client, metrics *cache.Repo
 		os, arch := deriveOSArch(job.Labels)
 
 		labels := map[string]string{
-			"workflow": workflowName,
+			"workflow": workflowKey,
 			"job":      job.Name,
 			"os":       os,
 			"arch":     arch,
 		}
 		attrs := map[string]string{
-			"runId":   strconv.FormatInt(run.Id, 10),
-			"runUrl":  run.HtmlUrl,
-			"jobUrl":  job.HtmlUrl,
-			"commit":  run.HeadSha,
-			"branch":  run.HeadBranch,
-			"concl":   job.Conclusion,
+			"runId":        strconv.FormatInt(run.Id, 10),
+			"runUrl":       run.HtmlUrl,
+			"jobUrl":       job.HtmlUrl,
+			"commit":       run.HeadSha,
+			"branch":       run.HeadBranch,
+			"concl":        job.Conclusion,
+			"workflowName": run.Name,
 		}
 
 		dur := job.CompletedAt.Sub(job.StartedAt).Seconds()
@@ -328,11 +339,18 @@ func restGET(ctx context.Context, client *http.Client, u string, out interface{}
 }
 
 // lastSeenRunId lives in git-bug's local config under
-// git-bug.bridge.github.metrics.lastRunId. Keeping it out of git
+// git-bug.bridge.github.metrics.lastRunId.v2. Keeping it out of git
 // history: it's per-checkout state, not something we want to share
 // over a push/pull bridge. Fresh clones re-ingest from zero, which
 // takes one burst but costs ~1 graphql-point per call and stabilizes.
-const confKeyLastRunId = "metrics.lastRunId"
+//
+// The .v2 suffix is deliberate — when we changed the `workflow`
+// label from display-name (dynamic) to workflow file path (stable),
+// any state stored under the old v1 key points at runs we ingested
+// into the wrong series. Bumping the key forces a one-off re-walk
+// of the most recent runs, re-populating under the stable labels.
+// Orphaned v1 series stick around until the user retires them.
+const confKeyLastRunId = "metrics.lastRunId.v2"
 
 func readLastSeenRunId(repo *cache.RepoCache) (int64, error) {
 	kv, err := repo.LocalConfig().ReadAll("git-bug.bridge.github." + confKeyLastRunId)

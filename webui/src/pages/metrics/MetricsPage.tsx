@@ -152,6 +152,10 @@ export default function MetricsPage() {
   const [error, setError] = useState<string | null>(null);
   const [match, setMatch] = useState('');
   const [range, setRange] = useState<Range>('30d');
+  // reloadTick is bumped on focus / Refresh; its value is part of the
+  // useEffect deps so every increment forces a re-fetch. We don't
+  // care about the numeric value, only that it changed.
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!repoName) return;
@@ -170,7 +174,18 @@ export default function MetricsPage() {
     return () => {
       cancelled = true;
     };
-  }, [repoName]);
+  }, [repoName, reloadTick]);
+
+  // Re-fetch when the tab regains focus. Common flow: user hits Sync
+  // in the header (which fires off a background bulk sync), switches
+  // to another tab while it runs, then comes back. Without this the
+  // metrics list silently reflects pre-sync state until a hard
+  // reload — the "only one datapoint" surprise the user just hit.
+  useEffect(() => {
+    const onFocus = () => setReloadTick((t) => t + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
 
   const filtered = useMemo(() => {
     if (!entries) return [];
@@ -190,6 +205,13 @@ export default function MetricsPage() {
           {entries.length} series
           {entries.length !== filtered.length && ` · ${filtered.length} shown`}
         </span>
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={() => setReloadTick((t) => t + 1)}
+        >
+          Refresh
+        </Button>
       </div>
 
       <div className={classes.searchRow}>
@@ -388,6 +410,3 @@ function formatValue(v: number, unit?: string): string {
   }
 }
 
-// Silence unused-import warning in case Button shape-shifts to a
-// placeholder for the "Record new" action later.
-const _ = Button;
