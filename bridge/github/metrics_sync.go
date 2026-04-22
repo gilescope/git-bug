@@ -339,18 +339,21 @@ func restGET(ctx context.Context, client *http.Client, u string, out interface{}
 }
 
 // lastSeenRunId lives in git-bug's local config under
-// git-bug.bridge.github.metrics.lastRunId.v2. Keeping it out of git
+// git-bug.bridge.github.metrics.lastRunId.v3. Keeping it out of git
 // history: it's per-checkout state, not something we want to share
 // over a push/pull bridge. Fresh clones re-ingest from zero, which
 // takes one burst but costs ~1 graphql-point per call and stabilizes.
 //
-// The .v2 suffix is deliberate — when we changed the `workflow`
-// label from display-name (dynamic) to workflow file path (stable),
-// any state stored under the old v1 key points at runs we ingested
-// into the wrong series. Bumping the key forces a one-off re-walk
-// of the most recent runs, re-populating under the stable labels.
-// Orphaned v1 series stick around until the user retires them.
-const confKeyLastRunId = "metrics.lastRunId.v2"
+// Version bumps:
+//   v1 → v2: label fix — `workflow` went from dynamic display name
+//            to stable workflow file path.
+//   v2 → v3: auto-commit fix — Record op used to stage without
+//            committing, so ingested points evaporated on cache
+//            re-resolve; the v2 sync wrote excerpts but no actual
+//            git objects.
+// Each bump forces a one-off re-walk of the most recent runs so the
+// fix takes effect without requiring a manual wipe.
+const confKeyLastRunId = "metrics.lastRunId.v3"
 
 func readLastSeenRunId(repo *cache.RepoCache) (int64, error) {
 	kv, err := repo.LocalConfig().ReadAll("git-bug.bridge.github." + confKeyLastRunId)
