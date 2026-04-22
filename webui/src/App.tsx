@@ -9,6 +9,7 @@ import IdentityPage from './pages/identity';
 import ListPage from './pages/list';
 import NewBugPage from './pages/new/NewBugPage';
 import NotFoundPage from './pages/notfound/NotFoundPage';
+import ProjectsPage from './pages/projects/ProjectsPage';
 import ReposLanding from './pages/repos/ReposLanding';
 import SearchPage from './pages/search/SearchPage';
 
@@ -56,6 +57,7 @@ export default function App() {
                   <Route path="/new" element={<NewBugPage />} />
                   <Route path="/bug/:id" element={<BugPage />} />
                   <Route path="/user/:id" element={<IdentityPage />} />
+                  <Route path="/projects" element={<ProjectsPage />} />
                   <Route element={<NotFoundPage />} />
                 </Routes>
               </RepoContextBinder>

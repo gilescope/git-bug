@@ -2,7 +2,7 @@ import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import { alpha } from '@mui/material/styles';
 import makeStyles from '@mui/styles/makeStyles';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 
 import CurrentIdentity from '../Identity/CurrentIdentity';
 import CurrentRepository from '../Identity/CurrentRepository';
@@ -38,10 +38,40 @@ const useStyles = makeStyles((theme) => ({
     height: '42px',
     marginRight: theme.spacing(2),
   },
+  // Nav link to /r/<repo>/projects. Only rendered when we're already
+  // inside a repo route — projects are owner-scoped and there's no
+  // sensible "global projects" view.
+  navLink: {
+    color: alpha(theme.palette.primary.contrastText, 0.85),
+    textDecoration: 'none',
+    padding: theme.spacing(0.5, 1),
+    marginRight: theme.spacing(1),
+    fontSize: '0.9rem',
+    '&:hover': {
+      color: theme.palette.primary.contrastText,
+      background: alpha(theme.palette.primary.contrastText, 0.08),
+      borderRadius: 4,
+    },
+  },
 }));
+
+// repoFromPath extracts the :repoName segment from /r/<name>/... so the
+// Header can render a Projects link without wiring up a full route
+// binding.
+function repoFromPath(pathname: string): string | null {
+  const m = pathname.match(/^\/r\/([^/]+)/);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
+}
 
 function Header() {
   const classes = useStyles();
+  const location = useLocation();
+  const repoName = repoFromPath(location.pathname);
 
   return (
     <>
@@ -52,6 +82,14 @@ function Header() {
             <CurrentRepository default="git-bug" />
           </Link>
           <RepoPicker />
+          {repoName && (
+            <Link
+              to={`/r/${encodeURIComponent(repoName)}/projects`}
+              className={classes.navLink}
+            >
+              Projects
+            </Link>
+          )}
           <GlobalSearch />
           <div className={classes.filler} />
           <SyncButton />

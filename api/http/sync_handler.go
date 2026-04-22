@@ -30,6 +30,10 @@ import (
 // immediately. The UI polls GET.
 type SyncHandler struct {
 	mrc *cache.MultiRepoCache
+	// repoPath is (name → filesystem path). Bridge syncs read/write
+	// <parent-of-repo>/.git-bug-projects.json after a successful import;
+	// we need the working-tree path to find that parent directory.
+	repoPath map[string]string
 
 	mu         sync.Mutex
 	bulk       SyncStatus
@@ -93,11 +97,12 @@ const (
 	initialConcurrency = 2
 )
 
-func NewSyncHandler(mrc *cache.MultiRepoCache) *SyncHandler {
+func NewSyncHandler(mrc *cache.MultiRepoCache, repoPath map[string]string) *SyncHandler {
 	return &SyncHandler{
-		mrc:   mrc,
-		bulk:  SyncStatus{Active: []string{}, Errors: map[string]string{}},
-		adhoc: map[string]context.CancelFunc{},
+		mrc:      mrc,
+		repoPath: repoPath,
+		bulk:     SyncStatus{Active: []string{}, Errors: map[string]string{}},
+		adhoc:    map[string]context.CancelFunc{},
 	}
 }
 
@@ -215,7 +220,7 @@ func (h *SyncHandler) startAdhoc(w http.ResponseWriter, repoName string) {
 	h.mu.Unlock()
 
 	go func() {
-		bugs, ids, err := syncOneRepo(ctx, rc)
+		bugs, ids, err := syncOneRepo(ctx, rc, h.repoPath[repoName])
 		h.mu.Lock()
 		delete(h.adhoc, repoName)
 		h.bulk.ImportedBugs += bugs
@@ -280,7 +285,7 @@ func (h *SyncHandler) runPool(ctx context.Context, repos []*cache.RepoCache, wor
 					return
 				}
 				h.markActive(repo.Name(), true)
-				bugs, ids, err := syncOneRepo(ctx, repo)
+				bugs, ids, err := syncOneRepo(ctx, repo, h.repoPath[repo.Name()])
 				h.markActive(repo.Name(), false)
 
 				h.mu.Lock()
@@ -373,7 +378,15 @@ func classifyRepo(repo *cache.RepoCache) syncKind {
 
 // syncOneRepo runs the equivalent of `git-bug bridge pull` on a single repo.
 // Repos without any bridge configured are treated as no-ops, not errors.
-func syncOneRepo(ctx context.Context, repo *cache.RepoCache) (int, int, error) {
+//
+// After a successful bridge pull, the handler also refreshes the GitHub
+// Projects V2 snapshot when repoPath is known — projects are owner-scoped
+// rather than per-repo, so the snapshot is written to
+// <parent-of-repo>/.git-bug-projects.json and shared between sibling
+// checkouts. An error here does NOT fail the sync (projects are an
+// optional enhancement); it surfaces as a returned error string but the
+// bug/identity counts still apply.
+func syncOneRepo(ctx context.Context, repo *cache.RepoCache, repoPath string) (int, int, error) {
 	b, err := bridge.DefaultBridge(repo)
 	if err != nil {
 		return 0, 0, nil
@@ -396,6 +409,15 @@ func syncOneRepo(ctx context.Context, repo *cache.RepoCache) (int, int, error) {
 			if result.Err != context.Canceled {
 				return bugs, ids, result.Err
 			}
+		}
+	}
+
+	// Projects sync is github-only and best-effort. An auth/permission
+	// failure here would otherwise poison the whole bulk-sync result;
+	// log-swallow instead so partial progress is preserved.
+	if repoPath != "" {
+		if _, perr := github.SyncProjects(ctx, repo, repoPath); perr != nil {
+			return bugs, ids, nil
 		}
 	}
 	return bugs, ids, nil

@@ -90,6 +90,12 @@ func setupRoutes(env *execenv.Env, opts webUIOptions) (*mux.Router, func() error
 
 	mrc := cache.NewMultiRepoCache()
 
+	// repoPath maps registered-repo-name → filesystem path. The projects
+	// handler needs the working-tree path to read/write the shared
+	// .git-bug-projects.json one level above the repo checkout; that path
+	// isn't exposed by the RepoCache API, so we record it as we register.
+	repoPath := map[string]string{}
+
 	// Discover repos for multi-repo mode.
 	extraRepos, err := discoverExtraRepos(opts)
 	if err != nil {
@@ -130,11 +136,13 @@ func setupRoutes(env *execenv.Env, opts webUIOptions) (*mux.Router, func() error
 		if err := execenv.CacheBuildProgressBar(env, events); err != nil {
 			return nil, nil, err
 		}
+		repoPath[cwdName] = cwdAbs
 	} else {
 		_, events := mrc.RegisterDefaultRepository(env.Repo)
 		if err := execenv.CacheBuildProgressBar(env, events); err != nil {
 			return nil, nil, err
 		}
+		repoPath[""] = cwdAbs
 	}
 
 	// Register each extra repo by its derived name. Skip the cwd path if it
@@ -153,6 +161,7 @@ func setupRoutes(env *execenv.Env, opts webUIOptions) (*mux.Router, func() error
 		if err := execenv.CacheBuildProgressBar(env, events); err != nil {
 			return nil, nil, err
 		}
+		repoPath[er.name] = er.path
 	}
 
 	var errOut io.Writer
@@ -169,12 +178,16 @@ func setupRoutes(env *execenv.Env, opts webUIOptions) (*mux.Router, func() error
 	router.Path("/graphql").Handler(graphql.NewHandler(mrc, errOut))
 	router.Path("/gitfile/{repo}/{rest:.+}").Handler(httpapi.NewGitFileHandler(mrc))
 	router.Path("/upload/{repo}").Methods("POST").Handler(httpapi.NewGitUploadFileHandler(mrc))
-	router.Path("/sync").Handler(httpapi.NewSyncHandler(mrc))
+	router.Path("/sync").Handler(httpapi.NewSyncHandler(mrc, repoPath))
 	router.Path("/checks/{repo:.+}/{sha:[0-9a-f]{40,64}}").Handler(httpapi.NewChecksHandler(mrc))
 	// PR inspection: {action} is "commits" or "diff"; base/head are query params
 	// (they can contain slashes — e.g. refs/heads/feature/foo — so they don't
 	// fit cleanly in the path template).
 	router.Path("/pr/{repo:.+}/{action:commits|diff}").Handler(httpapi.NewPRHandler(mrc))
+	// GitHub Projects V2: GET reads the cached JSON snapshot from
+	// <parent-of-repo>/.git-bug-projects.json; POST rebuilds it from
+	// GitHub's projectsV2 GraphQL API.
+	router.Path("/projects/{repo:.+}").Handler(httpapi.NewProjectsHandler(mrc, repoPath))
 	router.PathPrefix("/").Handler(webui.NewHandler())
 
 	return router, mrc.Close, nil
