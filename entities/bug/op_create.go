@@ -182,6 +182,12 @@ func (op *CreateOperation) Validate() error {
 		}
 	}
 
+	for _, file := range op.Files {
+		if !file.IsValid() {
+			return fmt.Errorf("invalid file hash")
+		}
+	}
+
 	return nil
 }
 

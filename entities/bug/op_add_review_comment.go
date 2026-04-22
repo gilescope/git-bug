@@ -153,7 +153,7 @@ func (a *AddReviewCommentTimelineItem) CombinedId() entity.CombinedId { return a
 func (a *AddReviewCommentTimelineItem) IsAuthored()                   {}
 
 // AddReviewComment appends a line-anchored review comment to a PR.
-func AddReviewComment(b Interface, author identity.Interface, unixTime int64, reviewId entity.CombinedId, body, commitHash, path string, startLine, endLine int, replyTo entity.CombinedId, metadata map[string]string) (entity.CombinedId, *AddReviewCommentOperation, error) {
+func AddReviewComment(b ReadWrite, author identity.Interface, unixTime int64, reviewId entity.CombinedId, body, commitHash, path string, startLine, endLine int, replyTo entity.CombinedId, metadata map[string]string) (entity.CombinedId, *AddReviewCommentOperation, error) {
 	create, ok := b.FirstOp().(*CreateOperation)
 	if !ok || create.Kind != common.PRKind {
 		return entity.UnsetCombinedId, nil, fmt.Errorf("AddReviewComment: bug is not a pull-request")

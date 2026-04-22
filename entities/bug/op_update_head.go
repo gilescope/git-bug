@@ -85,7 +85,7 @@ func (u *UpdateHeadTimelineItem) IsAuthored()                   {}
 
 // UpdateHead is a convenience function that advances the head commit of a PR.
 // The bug must have been created as a PR (Kind == PRKind); otherwise returns an error.
-func UpdateHead(b Interface, author identity.Interface, unixTime int64, newCommit string, metadata map[string]string) (*UpdateHeadOperation, error) {
+func UpdateHead(b ReadWrite, author identity.Interface, unixTime int64, newCommit string, metadata map[string]string) (*UpdateHeadOperation, error) {
 	create, ok := b.FirstOp().(*CreateOperation)
 	if !ok || create.Kind != common.PRKind {
 		return nil, fmt.Errorf("UpdateHead: bug is not a pull-request")

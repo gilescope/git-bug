@@ -24,7 +24,7 @@ func TestCreatePR(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, common.PRKind, op.Kind)
 
-	snap := b.Compile()
+	snap := b.Snapshot()
 	require.Equal(t, common.PRKind, snap.Kind)
 	require.Equal(t, common.OpenStatus, snap.Status)
 	require.Equal(t, "refs/heads/main", snap.BaseRef)
@@ -40,7 +40,7 @@ func TestCreatePRDraft(t *testing.T) {
 		"refs/heads/main", "refs/heads/wip", "0000000000000000000000000000000000000011", true, nil, nil)
 	require.NoError(t, err)
 
-	snap := b.Compile()
+	snap := b.Snapshot()
 	require.Equal(t, common.DraftStatus, snap.Status)
 }
 
@@ -89,7 +89,7 @@ func TestMergeOp(t *testing.T) {
 	_, err = Merge(b, rene, time.Now().Unix(), merge, nil)
 	require.NoError(t, err)
 
-	snap := b.Compile()
+	snap := b.Snapshot()
 	require.Equal(t, common.MergedStatus, snap.Status)
 	require.Equal(t, merge, snap.MergeCommit)
 }

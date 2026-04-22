@@ -97,7 +97,7 @@ func (a *AddReviewTimelineItem) CombinedId() entity.CombinedId { return a.combin
 func (a *AddReviewTimelineItem) IsAuthored()                   {}
 
 // AddReview is a convenience function that appends a review to a PR.
-func AddReview(b Interface, author identity.Interface, unixTime int64, state ReviewState, body, commitHash string, metadata map[string]string) (entity.CombinedId, *AddReviewOperation, error) {
+func AddReview(b ReadWrite, author identity.Interface, unixTime int64, state ReviewState, body, commitHash string, metadata map[string]string) (entity.CombinedId, *AddReviewOperation, error) {
 	create, ok := b.FirstOp().(*CreateOperation)
 	if !ok || create.Kind != common.PRKind {
 		return entity.UnsetCombinedId, nil, fmt.Errorf("AddReview: bug is not a pull-request")

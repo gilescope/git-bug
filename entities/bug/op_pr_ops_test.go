@@ -30,7 +30,7 @@ func TestUpdateHead(t *testing.T) {
 	require.Equal(t, "0000000000000000000000000000000000000001", op.PreviousCommit)
 	require.Equal(t, "0000000000000000000000000000000000000002", op.NewCommit)
 
-	snap := b.Compile()
+	snap := b.Snapshot()
 	require.Equal(t, "0000000000000000000000000000000000000002", snap.HeadCommit)
 
 	// Next update uses the most recent head as previous.
@@ -56,7 +56,7 @@ func TestAddReview(t *testing.T) {
 	require.NotEqual(t, entity.UnsetCombinedId, id)
 	require.Equal(t, ReviewApproved, op.State)
 
-	snap := b.Compile()
+	snap := b.Snapshot()
 	require.Len(t, snap.Reviews, 1)
 	require.Equal(t, ReviewApproved, snap.Reviews[0].State)
 	require.Equal(t, "0000000000000000000000000000000000000001", snap.Reviews[0].CommitHash)
@@ -72,7 +72,7 @@ func TestAddReviewComment(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, entity.UnsetCombinedId, commentId)
 
-	snap := b.Compile()
+	snap := b.Snapshot()
 	require.Len(t, snap.Reviews, 1)
 	require.Len(t, snap.Reviews[0].Comments, 1)
 	require.Equal(t, "foo.go", snap.Reviews[0].Comments[0].Path)

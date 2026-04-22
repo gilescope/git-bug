@@ -102,7 +102,7 @@ func (s SetStatusTimelineItem) CombinedId() entity.CombinedId {
 func (s *SetStatusTimelineItem) IsAuthored() {}
 
 // Open is a convenience function to change a bugs state to Open
-func Open(b Interface, author identity.Interface, unixTime int64, metadata map[string]string) (*SetStatusOperation, error) {
+func Open(b ReadWrite, author identity.Interface, unixTime int64, metadata map[string]string) (*SetStatusOperation, error) {
 	op := NewSetStatusOp(author, unixTime, common.OpenStatus)
 	for key, value := range metadata {
 		op.SetMetadata(key, value)
@@ -115,7 +115,7 @@ func Open(b Interface, author identity.Interface, unixTime int64, metadata map[s
 }
 
 // Close is a convenience function to change a bugs state to Close
-func Close(b Interface, author identity.Interface, unixTime int64, metadata map[string]string) (*SetStatusOperation, error) {
+func Close(b ReadWrite, author identity.Interface, unixTime int64, metadata map[string]string) (*SetStatusOperation, error) {
 	op := NewSetStatusOp(author, unixTime, common.ClosedStatus)
 	for key, value := range metadata {
 		op.SetMetadata(key, value)
@@ -128,7 +128,7 @@ func Close(b Interface, author identity.Interface, unixTime int64, metadata map[
 }
 
 // Merge is a convenience function to mark a PR as merged with the given commit hash.
-func Merge(b Interface, author identity.Interface, unixTime int64, mergeCommit string, metadata map[string]string) (*SetStatusOperation, error) {
+func Merge(b ReadWrite, author identity.Interface, unixTime int64, mergeCommit string, metadata map[string]string) (*SetStatusOperation, error) {
 	op := NewMergeOp(author, unixTime, mergeCommit)
 	for key, value := range metadata {
 		op.SetMetadata(key, value)
@@ -141,6 +141,6 @@ func Merge(b Interface, author identity.Interface, unixTime int64, mergeCommit s
 }
 
 // MarkReady is a convenience function to move a PR from draft to open (ready-for-review).
-func MarkReady(b Interface, author identity.Interface, unixTime int64, metadata map[string]string) (*SetStatusOperation, error) {
+func MarkReady(b ReadWrite, author identity.Interface, unixTime int64, metadata map[string]string) (*SetStatusOperation, error) {
 	return Open(b, author, unixTime, metadata)
 }
