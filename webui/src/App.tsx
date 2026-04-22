@@ -7,6 +7,7 @@ import RepoContextBinder from './components/RepoContext';
 import BugPage from './pages/bug';
 import IdentityPage from './pages/identity';
 import ListPage from './pages/list';
+import MetricsPage from './pages/metrics/MetricsPage';
 import NewBugPage from './pages/new/NewBugPage';
 import NotFoundPage from './pages/notfound/NotFoundPage';
 import ProjectsPage from './pages/projects/ProjectsPage';
@@ -58,6 +59,7 @@ export default function App() {
                   <Route path="/bug/:id" element={<BugPage />} />
                   <Route path="/user/:id" element={<IdentityPage />} />
                   <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/metrics" element={<MetricsPage />} />
                   <Route element={<NotFoundPage />} />
                 </Routes>
               </RepoContextBinder>

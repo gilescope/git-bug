@@ -10,6 +10,7 @@ import (
 	bridgecmd "github.com/git-bug/git-bug/commands/bridge"
 	bugcmd "github.com/git-bug/git-bug/commands/bug"
 	"github.com/git-bug/git-bug/commands/execenv"
+	metriccmd "github.com/git-bug/git-bug/commands/metric"
 	"github.com/git-bug/git-bug/commands/user"
 )
 
@@ -60,6 +61,7 @@ the same git remote you are already using to collaborate with other people.
 
 	addCmdWithGroup(boardcmd.NewBoardCommand(env), entityGroup)
 	addCmdWithGroup(bugcmd.NewBugCommand(env), entityGroup)
+	addCmdWithGroup(metriccmd.NewMetricCommand(env), entityGroup)
 	addCmdWithGroup(usercmd.NewUserCommand(env), entityGroup)
 	addCmdWithGroup(newLabelCommand(env), entityGroup)
 

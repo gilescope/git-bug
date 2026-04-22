@@ -10,6 +10,7 @@ import (
 
 	"github.com/git-bug/git-bug/entities/board"
 	"github.com/git-bug/git-bug/entities/bug"
+	"github.com/git-bug/git-bug/entities/metric"
 	"github.com/git-bug/git-bug/entities/identity"
 	"github.com/git-bug/git-bug/entity"
 	"github.com/git-bug/git-bug/repository"
@@ -71,6 +72,7 @@ type RepoCache struct {
 	boards     *RepoCacheBoard
 	bugs       *RepoCacheBug
 	identities *RepoCacheIdentity
+	metrics    *RepoCacheMetric
 
 	subcaches []cacheMgmt
 
@@ -104,6 +106,9 @@ func NewNamedRepoCache(r repository.ClockedRepo, name string) (*RepoCache, chan 
 	c.boards = NewRepoCacheBoard(r, c.getResolvers, c.GetUserIdentity)
 	c.subcaches = append(c.subcaches, c.boards)
 
+	c.metrics = NewRepoCacheMetric(r, c.getResolvers, c.GetUserIdentity)
+	c.subcaches = append(c.subcaches, c.metrics)
+
 	c.resolvers = entity.Resolvers{
 		identity.Interface(nil): entity.ResolverFunc[*IdentityCache](c.identities.Resolve),
 		&IdentityCache{}:        entity.ResolverFunc[*IdentityCache](c.identities.Resolve),
@@ -116,6 +121,10 @@ func NewNamedRepoCache(r repository.ClockedRepo, name string) (*RepoCache, chan 
 		&board.Board{}:          entity.ResolverFunc[*BoardCache](c.boards.Resolve),
 		&BoardCache{}:           entity.ResolverFunc[*BoardCache](c.boards.Resolve),
 		&BoardExcerpt{}:         entity.ResolverFunc[*BoardExcerpt](c.boards.ResolveExcerpt),
+		metric.ReadOnly(nil):    entity.ResolverFunc[*MetricCache](c.metrics.Resolve),
+		&metric.Series{}:        entity.ResolverFunc[*MetricCache](c.metrics.Resolve),
+		&MetricCache{}:          entity.ResolverFunc[*MetricCache](c.metrics.Resolve),
+		&MetricExcerpt{}:        entity.ResolverFunc[*MetricExcerpt](c.metrics.ResolveExcerpt),
 	}
 
 	// small buffer so that the functions below can emit an event without blocking
@@ -167,6 +176,11 @@ func (c *RepoCache) Bugs() *RepoCacheBug {
 // Identities gives access to the Identity entities
 func (c *RepoCache) Identities() *RepoCacheIdentity {
 	return c.identities
+}
+
+// Metrics gives access to the Metric series entities
+func (c *RepoCache) Metrics() *RepoCacheMetric {
+	return c.metrics
 }
 
 func (c *RepoCache) getResolvers() entity.Resolvers {

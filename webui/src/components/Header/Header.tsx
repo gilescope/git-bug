@@ -90,6 +90,14 @@ function Header() {
               Projects
             </Link>
           )}
+          {repoName && (
+            <Link
+              to={`/r/${encodeURIComponent(repoName)}/metrics`}
+              className={classes.navLink}
+            >
+              Metrics
+            </Link>
+          )}
           <GlobalSearch />
           <div className={classes.filler} />
           <SyncButton />

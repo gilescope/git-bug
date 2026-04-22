@@ -188,6 +188,12 @@ func setupRoutes(env *execenv.Env, opts webUIOptions) (*mux.Router, func() error
 	// <parent-of-repo>/.git-bug-projects.json; POST rebuilds it from
 	// GitHub's projectsV2 GraphQL API.
 	router.Path("/projects/{repo:.+}").Handler(httpapi.NewProjectsHandler(mrc, repoPath))
+	// Metric series: GET /metrics/{repo} lists headers; GET with
+	// ?id=<prefix> returns full points for one series. ?match=,
+	// ?since=, ?until=, ?retired=1 also recognised. The repo name
+	// can contain slashes, so per-series id goes on the query
+	// string rather than in the path (no path ambiguity).
+	router.Path("/metrics/{repo:.+}").Handler(httpapi.NewMetricsHandler(mrc))
 	router.PathPrefix("/").Handler(webui.NewHandler())
 
 	return router, mrc.Close, nil
