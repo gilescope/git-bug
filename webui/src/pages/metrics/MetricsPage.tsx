@@ -72,6 +72,87 @@ function hasConcl(rows: ChartRow[]): boolean {
   return false;
 }
 
+// BackfillMenu is the "pull more history" affordance. It POSTs to
+// /sync?repo=<name>&backfillDays=N which kicks off a one-shot
+// time-bounded ingest. Returns 202 (request accepted) immediately;
+// the actual fetch runs in the background and can take a minute or
+// two for an active repo with many workflows. We poll /sync until
+// the repo drops out of `active` to know when to refresh.
+function BackfillMenu({
+  repoName,
+  busy,
+  onBusy,
+  onDone,
+  onError,
+}: {
+  repoName: string;
+  busy: boolean;
+  onBusy: (b: boolean) => void;
+  onDone: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [days, setDays] = useState(14);
+  const trigger = async () => {
+    onBusy(true);
+    try {
+      const r = await fetch(
+        `/sync?repo=${encodeURIComponent(repoName)}&backfillDays=${days}`,
+        { method: 'POST' }
+      );
+      if (!r.ok && r.status !== 202) {
+        onError(await r.text());
+        onBusy(false);
+        return;
+      }
+      // Poll until this repo leaves the `active` list, then declare
+      // done. 5 s cadence is friendly to the server and quick enough
+      // that a user staring at the page sees feedback.
+      const start = Date.now();
+      const tick = async () => {
+        try {
+          const s = await (await fetch('/sync')).json();
+          const active: string[] = s.active || [];
+          if (!active.includes(repoName)) {
+            onBusy(false);
+            onDone();
+            return;
+          }
+          if (Date.now() - start > 10 * 60 * 1000) {
+            onBusy(false);
+            onError('timed out waiting for backfill (still running on server)');
+            return;
+          }
+          window.setTimeout(tick, 5000);
+        } catch {
+          window.setTimeout(tick, 5000);
+        }
+      };
+      window.setTimeout(tick, 2000);
+    } catch (e) {
+      onError((e as Error).message || 'request failed');
+      onBusy(false);
+    }
+  };
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+      <Select
+        size="small"
+        value={days}
+        onChange={(e) => setDays(Number(e.target.value))}
+        disabled={busy}
+      >
+        <MenuItem value={7}>Backfill 7d</MenuItem>
+        <MenuItem value={14}>Backfill 14d</MenuItem>
+        <MenuItem value={30}>Backfill 30d</MenuItem>
+        <MenuItem value={90}>Backfill 90d</MenuItem>
+      </Select>
+      <Button variant="outlined" size="small" onClick={trigger} disabled={busy}>
+        {busy ? 'Backfilling…' : 'Run'}
+      </Button>
+    </span>
+  );
+}
+
 // dotColorFor maps a workflow-job conclusion to a chart colour.
 // Conventions follow the existing pass/fail palette used in
 // PrDiff (#2da44e green, #cf222e red); cancelled / skipped get a
@@ -221,6 +302,8 @@ export default function MetricsPage() {
   // would just clutter the page. Hidden by default, opt-in via the
   // "show status series" checkbox for users who want raw access.
   const [showStatusSeries, setShowStatusSeries] = useState(false);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
   // reloadTick is bumped on focus / Refresh; its value is part of the
   // useEffect deps so every increment forces a re-fetch. We don't
   // care about the numeric value, only that it changed.
@@ -288,6 +371,25 @@ export default function MetricsPage() {
         >
           Refresh
         </Button>
+        <BackfillMenu
+          repoName={repoName!}
+          busy={backfillBusy}
+          onBusy={setBackfillBusy}
+          onDone={() => {
+            setBackfillMsg('Backfill complete — refreshing.');
+            setReloadTick((t) => t + 1);
+            window.setTimeout(() => setBackfillMsg(null), 4000);
+          }}
+          onError={(msg) => {
+            setBackfillMsg(`Backfill failed: ${msg}`);
+            window.setTimeout(() => setBackfillMsg(null), 8000);
+          }}
+        />
+        {backfillMsg && (
+          <span className={classes.subtitle} style={{ marginLeft: 8 }}>
+            {backfillMsg}
+          </span>
+        )}
       </div>
 
       <div className={classes.searchRow}>

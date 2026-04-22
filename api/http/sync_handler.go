@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -154,11 +155,69 @@ func (h *SyncHandler) writeStatus(w http.ResponseWriter) {
 
 func (h *SyncHandler) start(w http.ResponseWriter, r *http.Request) {
 	repoName := r.URL.Query().Get("repo")
+	// ?backfillDays=N runs a backfill instead of an incremental sync.
+	// Implies a single-repo target: backfilling every repo at once would
+	// burn an enormous amount of API budget for little user benefit.
+	backfillDays := 0
+	if v := r.URL.Query().Get("backfillDays"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			backfillDays = n
+		}
+	}
 	if repoName == "" {
+		if backfillDays > 0 {
+			http.Error(w, "?backfillDays requires ?repo=<name>", http.StatusBadRequest)
+			return
+		}
 		h.startBulk(w)
 		return
 	}
+	if backfillDays > 0 {
+		h.startBackfill(w, repoName, backfillDays)
+		return
+	}
 	h.startAdhoc(w, repoName)
+}
+
+// startBackfill triggers a one-shot CI metrics backfill for a single
+// repo over the last `days` days. Doesn't run any of the bug import
+// machinery — that's what the regular sync path is for. Backfill is
+// metrics-only by design: the user explicitly asked for history, and
+// the bug import is already idempotent on every sync anyway.
+func (h *SyncHandler) startBackfill(w http.ResponseWriter, repoName string, days int) {
+	rc, err := h.mrc.ResolveRepo(repoName)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.mu.Lock()
+	if _, already := h.adhoc[repoName]; already {
+		h.mu.Unlock()
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "this repo is already being synced"})
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	h.adhoc[repoName] = cancel
+	h.mu.Unlock()
+
+	go func() {
+		since := time.Now().AddDate(0, 0, -days)
+		err := github.BackfillWorkflowMetrics(ctx, rc, since)
+		h.mu.Lock()
+		delete(h.adhoc, repoName)
+		if err != nil {
+			h.bulk.Errors[repoName] = "backfill: " + err.Error()
+		} else {
+			delete(h.bulk.Errors, repoName)
+		}
+		h.mu.Unlock()
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+	h.writeStatus(w)
 }
 
 func (h *SyncHandler) startBulk(w http.ResponseWriter) {

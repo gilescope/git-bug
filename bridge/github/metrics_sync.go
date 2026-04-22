@@ -41,10 +41,40 @@ import (
 //   - runUrl (html_url)
 //   - commit (head_sha)
 func SyncWorkflowMetrics(ctx context.Context, repo *cache.RepoCache, limit int) error {
-	if limit <= 0 {
-		limit = 20
-	}
+	return syncMetricsWithOptions(ctx, repo, syncMetricsOptions{maxRuns: limit})
+}
 
+// BackfillWorkflowMetrics walks workflow runs back in time until it
+// hits one older than `since`, ingesting every completed run along
+// the way. Unlike SyncWorkflowMetrics it ignores the lastSeenRunId
+// guard — backfill is a deliberate "give me history" call, not the
+// idempotent incremental loop. Already-ingested runs are silently
+// re-recorded; that's safe because each ingest just appends to the
+// series and a duplicate point is a tolerable cost for the much
+// simpler "no run-id bookkeeping" implementation.
+//
+// pageCap bounds the number of REST pages we'll walk in a single
+// call so a misconfigured `since` doesn't accidentally pull years
+// of history. 20 pages × 100 runs = 2000 runs, plenty for any
+// reasonable look-back window.
+func BackfillWorkflowMetrics(ctx context.Context, repo *cache.RepoCache, since time.Time) error {
+	return syncMetricsWithOptions(ctx, repo, syncMetricsOptions{since: since})
+}
+
+type syncMetricsOptions struct {
+	// Exactly one of these is meaningful:
+	//   maxRuns > 0   → incremental: at most this many recent runs,
+	//                    skipping anything at-or-below lastSeenRunId.
+	//   since.IsZero==false → backfill: walk pages until a run older
+	//                    than `since`, ignoring the lastSeenRunId
+	//                    guard so the user can re-pull arbitrarily.
+	maxRuns int
+	since   time.Time
+}
+
+const backfillPageCap = 20 // 100 runs/page × 20 = 2000 runs ceiling
+
+func syncMetricsWithOptions(ctx context.Context, repo *cache.RepoCache, opts syncMetricsOptions) error {
 	cfg, err := readGithubConfig(repo)
 	if err != nil {
 		return err
@@ -56,7 +86,6 @@ func SyncWorkflowMetrics(ctx context.Context, repo *cache.RepoCache, limit int) 
 	if err != nil {
 		return err
 	}
-
 	client := oauth2Client(ctx, token)
 
 	branch, err := fetchDefaultBranch(ctx, client, cfg.owner, cfg.project)
@@ -64,9 +93,19 @@ func SyncWorkflowMetrics(ctx context.Context, repo *cache.RepoCache, limit int) 
 		return err
 	}
 
+	if !opts.since.IsZero() {
+		return backfillByTime(ctx, client, repo, cfg.owner, cfg.project, branch, opts.since)
+	}
+	return incrementalByCount(ctx, client, repo, cfg.owner, cfg.project, branch, opts.maxRuns)
+}
+
+func incrementalByCount(ctx context.Context, client *http.Client, repo *cache.RepoCache, owner, project, branch string, limit int) error {
+	if limit <= 0 {
+		limit = 20
+	}
 	lastSeen, _ := readLastSeenRunId(repo)
 
-	runs, err := listWorkflowRuns(ctx, client, cfg.owner, cfg.project, branch, limit)
+	runs, err := listWorkflowRuns(ctx, client, owner, project, branch, limit, 1)
 	if err != nil {
 		return err
 	}
@@ -81,15 +120,10 @@ func SyncWorkflowMetrics(ctx context.Context, repo *cache.RepoCache, limit int) 
 		if run.Id <= lastSeen {
 			continue
 		}
-		// Only completed runs have meaningful duration. In-progress
-		// runs are skipped — we'll pick them up on the next sync once
-		// status transitions to "completed".
 		if run.Status != "completed" {
 			continue
 		}
-		if err := ingestRunJobs(ctx, client, repo.Metrics(), cfg.owner, cfg.project, run); err != nil {
-			// Per-run failure shouldn't stop the bulk; log via caller
-			// by returning at the end. For now, just carry on.
+		if err := ingestRunJobs(ctx, client, repo.Metrics(), owner, project, run); err != nil {
 			continue
 		}
 		if run.Id > maxId {
@@ -99,6 +133,33 @@ func SyncWorkflowMetrics(ctx context.Context, repo *cache.RepoCache, limit int) 
 
 	if maxId > lastSeen {
 		_ = writeLastSeenRunId(repo, maxId)
+	}
+	return nil
+}
+
+func backfillByTime(ctx context.Context, client *http.Client, repo *cache.RepoCache, owner, project, branch string, since time.Time) error {
+	for page := 1; page <= backfillPageCap; page++ {
+		runs, err := listWorkflowRuns(ctx, client, owner, project, branch, 100, page)
+		if err != nil {
+			return err
+		}
+		if len(runs) == 0 {
+			return nil // walked the whole branch history
+		}
+		for _, run := range runs {
+			// Done as soon as we see a run older than the cutoff —
+			// list returns newest-first by created_at, so subsequent
+			// pages would only carry yet-older runs.
+			if run.CreatedAt.Before(since) {
+				return nil
+			}
+			if run.Status != "completed" {
+				continue
+			}
+			if err := ingestRunJobs(ctx, client, repo.Metrics(), owner, project, run); err != nil {
+				continue
+			}
+		}
 	}
 	return nil
 }
@@ -169,14 +230,17 @@ type workflowRun struct {
 	HtmlUrl     string    `json:"html_url"`
 }
 
-func listWorkflowRuns(ctx context.Context, client *http.Client, owner, project, branch string, limit int) ([]workflowRun, error) {
+func listWorkflowRuns(ctx context.Context, client *http.Client, owner, project, branch string, limit, page int) ([]workflowRun, error) {
 	per := limit
 	if per > 100 {
 		per = 100
 	}
-	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs?branch=%s&per_page=%d",
+	if page <= 0 {
+		page = 1
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs?branch=%s&per_page=%d&page=%d",
 		githubV3Url, url.PathEscape(owner), url.PathEscape(project),
-		url.QueryEscape(branch), per)
+		url.QueryEscape(branch), per, page)
 
 	var resp struct {
 		WorkflowRuns []workflowRun `json:"workflow_runs"`
