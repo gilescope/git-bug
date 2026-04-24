@@ -330,6 +330,10 @@ export default function MetricsPage() {
   // would just clutter the page. Hidden by default, opt-in via the
   // "show status series" checkbox for users who want raw access.
   const [showStatusSeries, setShowStatusSeries] = useState(false);
+  // Cancelled / skipped / neutral / action_required runs report
+  // arbitrary durations that aren't useful for trend analysis.
+  // Hidden by default; enable to see when those runs happened.
+  const [showOffTrend, setShowOffTrend] = useState(false);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
   // reloadTick is bumped on focus / Refresh; its value is part of the
@@ -451,6 +455,17 @@ export default function MetricsPage() {
           label="show status series"
           slotProps={{ typography: { fontSize: '0.85rem' } }}
         />
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={showOffTrend}
+              onChange={(e) => setShowOffTrend(e.target.checked)}
+            />
+          }
+          label="show cancelled / skipped"
+          slotProps={{ typography: { fontSize: '0.85rem' } }}
+        />
       </div>
 
       {filtered.length === 0 && (
@@ -469,6 +484,7 @@ export default function MetricsPage() {
           entry={e}
           range={range}
           repoName={repoName!}
+          showOffTrend={showOffTrend}
           classes={classes}
         />
       ))}
@@ -480,11 +496,13 @@ function SeriesCard({
   entry,
   range,
   repoName,
+  showOffTrend,
   classes,
 }: {
   entry: ListEntry;
   range: Range;
   repoName: string;
+  showOffTrend: boolean;
   classes: ReturnType<typeof useStyles>;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -522,20 +540,27 @@ function SeriesCard({
   // renderer can colour by pass/fail and wire the click-through.
   const data = useMemo<ChartRow[]>(() => {
     if (!detail) return [];
-    return detail.points.map((p) => {
-      const v = p.value;
+    const rows: ChartRow[] = [];
+    for (const p of detail.points) {
       const concl = p.attrs?.concl;
       const include = isLineWorthy(concl);
-      return {
+      // When the user has hidden cancelled/skipped/etc, drop those
+      // rows entirely — the chart's x-axis tick density and
+      // tooltip behaviour are both nicer without invisible
+      // placeholders.
+      if (!include && !showOffTrend) continue;
+      const v = p.value;
+      rows.push({
         t: Date.parse(p.time),
         v,
         vLine: include ? v : null,
         vOff: include ? null : v,
         concl,
         jobUrl: p.attrs?.jobUrl,
-      };
-    });
-  }, [detail]);
+      });
+    }
+    return rows;
+  }, [detail, showOffTrend]);
 
   return (
     <div className={classes.card}>
@@ -565,7 +590,9 @@ function SeriesCard({
         <div className={classes.legend}>
           <span><span className={classes.legendDot} style={{ background: dotColorFor('success') }} />pass</span>
           <span><span className={classes.legendDot} style={{ background: dotColorFor('failure') }} />fail</span>
-          <span><span className={classes.legendDot} style={{ background: dotColorFor('cancelled') }} />cancelled / skipped</span>
+          {showOffTrend && (
+            <span><span className={classes.legendDot} style={{ background: dotColorFor('cancelled') }} />cancelled / skipped</span>
+          )}
           <span style={{ marginLeft: 8, fontStyle: 'italic' }}>(click a dot to open the run on github)</span>
         </div>
       )}
