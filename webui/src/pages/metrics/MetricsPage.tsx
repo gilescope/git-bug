@@ -568,21 +568,16 @@ function SeriesCard({
   // format back to a date label inside the Tooltip / XAxis formatter.
   // We also carry `concl` + `jobUrl` onto the row so the per-dot
   // renderer can colour by pass/fail and wire the click-through.
-  // dropped counts how many raw points the showOffTrend filter
-  // skipped, so the empty-state copy can say "all N points are
-  // cancelled/skipped" instead of the misleading "no points in
-  // range" that suggests an empty time window.
-  const { data, dropped } = useMemo<{ data: ChartRow[]; dropped: number }>(() => {
-    if (!detail) return { data: [], dropped: 0 };
+  const data = useMemo<ChartRow[]>(() => {
+    if (!detail) return [];
     const rows: ChartRow[] = [];
-    let skipped = 0;
     for (const p of detail.points) {
       const concl = p.attrs?.concl;
       const include = isLineWorthy(concl);
-      if (!include && !showOffTrend) {
-        skipped++;
-        continue;
-      }
+      // Drop off-trend rows (cancelled/skipped/...) when the toggle
+      // is off — keeps the chart clean and lets the parent suppress
+      // the whole card if every point is filtered out.
+      if (!include && !showOffTrend) continue;
       const v = p.value;
       rows.push({
         t: Date.parse(p.time),
@@ -593,7 +588,7 @@ function SeriesCard({
         jobUrl: p.attrs?.jobUrl,
       });
     }
-    return { data: rows, dropped: skipped };
+    return rows;
   }, [detail, showOffTrend]);
 
   // Title gets a human-friendly rendering: for ci.* series with a
@@ -604,6 +599,16 @@ function SeriesCard({
   // value twice.
   const title = formatSeriesTitle(entry);
   const titleHasWorkflow = !!(entry.labels?.workflow && isCiSeries(entry.name));
+
+  // Suppress the card entirely once we know there's nothing to plot
+  // — empty time window, or every point filtered out by show-off-trend.
+  // Listing cards with "no points" or "all skipped" copy was just
+  // visual noise; user explicitly asked to skip the chart in that case.
+  // We still render during `loading` so the page doesn't flash blank
+  // on first load.
+  if (!loading && data.length === 0) {
+    return null;
+  }
 
   return (
     <div className={classes.card}>
@@ -628,15 +633,6 @@ function SeriesCard({
         </span>
       </div>
       {loading && <div className={classes.loadingChart}>loading points…</div>}
-      {!loading && data.length === 0 && dropped > 0 && (
-        <div className={classes.loadingChart}>
-          {dropped} {dropped === 1 ? 'point' : 'points'} in range, all
-          cancelled / skipped — toggle &ldquo;show cancelled / skipped&rdquo; to see them.
-        </div>
-      )}
-      {!loading && data.length === 0 && dropped === 0 && (
-        <div className={classes.loadingChart}>no points in range</div>
-      )}
       {!loading && data.length > 0 && hasConcl(data) && (
         <div className={classes.legend}>
           <span><span className={classes.legendDot} style={{ background: dotColorFor('success') }} />pass</span>
