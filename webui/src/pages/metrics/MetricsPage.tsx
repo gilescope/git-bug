@@ -568,17 +568,21 @@ function SeriesCard({
   // format back to a date label inside the Tooltip / XAxis formatter.
   // We also carry `concl` + `jobUrl` onto the row so the per-dot
   // renderer can colour by pass/fail and wire the click-through.
-  const data = useMemo<ChartRow[]>(() => {
-    if (!detail) return [];
+  // dropped counts how many raw points the showOffTrend filter
+  // skipped, so the empty-state copy can say "all N points are
+  // cancelled/skipped" instead of the misleading "no points in
+  // range" that suggests an empty time window.
+  const { data, dropped } = useMemo<{ data: ChartRow[]; dropped: number }>(() => {
+    if (!detail) return { data: [], dropped: 0 };
     const rows: ChartRow[] = [];
+    let skipped = 0;
     for (const p of detail.points) {
       const concl = p.attrs?.concl;
       const include = isLineWorthy(concl);
-      // When the user has hidden cancelled/skipped/etc, drop those
-      // rows entirely — the chart's x-axis tick density and
-      // tooltip behaviour are both nicer without invisible
-      // placeholders.
-      if (!include && !showOffTrend) continue;
+      if (!include && !showOffTrend) {
+        skipped++;
+        continue;
+      }
       const v = p.value;
       rows.push({
         t: Date.parse(p.time),
@@ -589,7 +593,7 @@ function SeriesCard({
         jobUrl: p.attrs?.jobUrl,
       });
     }
-    return rows;
+    return { data: rows, dropped: skipped };
   }, [detail, showOffTrend]);
 
   // Title gets a human-friendly rendering: for ci.* series with a
@@ -624,7 +628,13 @@ function SeriesCard({
         </span>
       </div>
       {loading && <div className={classes.loadingChart}>loading points…</div>}
-      {!loading && data.length === 0 && (
+      {!loading && data.length === 0 && dropped > 0 && (
+        <div className={classes.loadingChart}>
+          {dropped} {dropped === 1 ? 'point' : 'points'} in range, all
+          cancelled / skipped — toggle &ldquo;show cancelled / skipped&rdquo; to see them.
+        </div>
+      )}
+      {!loading && data.length === 0 && dropped === 0 && (
         <div className={classes.loadingChart}>no points in range</div>
       )}
       {!loading && data.length > 0 && hasConcl(data) && (
