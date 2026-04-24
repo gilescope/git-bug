@@ -89,6 +89,36 @@ function isLineWorthy(concl?: string): boolean {
   }
 }
 
+// isCiSeries flags series populated by the GitHub Actions ingester.
+// Used to decide whether to apply the workflow-aware title format.
+function isCiSeries(name: string): boolean {
+  return name === 'ci.job.duration' || name === 'ci.job.status';
+}
+
+// formatSeriesTitle turns a raw series header into a human-readable
+// chart title. For ci.* series with a `workflow` label that looks
+// like a file path, we lead with the workflow basename so the chart
+// reads "<workflow.yml> ci job duration" instead of the dotted
+// metric name; for everything else, we just humanise the metric
+// name (replace dots with spaces). Keep it pure — easier to test
+// and the renderer can call it on every entry without caching.
+function formatSeriesTitle(entry: ListEntry): string {
+  const human = entry.name.replace(/\./g, ' ');
+  if (isCiSeries(entry.name) && entry.labels?.workflow) {
+    return `${workflowBasename(entry.labels.workflow)} ${human}`;
+  }
+  return human;
+}
+
+// workflowBasename strips the ".github/workflows/" prefix and any
+// leading directory; if the path doesn't look like a real workflow
+// path we return it unchanged so something is always shown.
+function workflowBasename(path: string): string {
+  const trimmed = path.replace(/^\.github\/workflows\//, '');
+  const slash = trimmed.lastIndexOf('/');
+  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+}
+
 // hasConcl reports whether any row carries a `concl` attr — the
 // signal we use to decide whether to render the pass/fail legend.
 // User-recorded series (e.g. test durations from a JUnit importer)
@@ -562,20 +592,31 @@ function SeriesCard({
     return rows;
   }, [detail, showOffTrend]);
 
+  // Title gets a human-friendly rendering: for ci.* series with a
+  // workflow file path label, lead with the workflow basename so the
+  // chart reads "<workflow.yml> ci job duration" instead of the raw
+  // dotted metric name. The workflow chip is then redundant; we
+  // suppress it from the chip row so the user doesn't see the same
+  // value twice.
+  const title = formatSeriesTitle(entry);
+  const titleHasWorkflow = !!(entry.labels?.workflow && isCiSeries(entry.name));
+
   return (
     <div className={classes.card}>
       <div className={classes.cardHead}>
-        <span className={classes.name}>{entry.name}</span>
+        <span className={classes.name}>{title}</span>
         {entry.labels &&
-          Object.entries(entry.labels).map(([k, v]) => (
-            <Chip
-              key={k}
-              size="small"
-              label={`${k}=${v}`}
-              variant="outlined"
-              style={{ height: 20, fontSize: '0.7rem' }}
-            />
-          ))}
+          Object.entries(entry.labels)
+            .filter(([k]) => !(titleHasWorkflow && k === 'workflow'))
+            .map(([k, v]) => (
+              <Chip
+                key={k}
+                size="small"
+                label={`${k}=${v}`}
+                variant="outlined"
+                style={{ height: 20, fontSize: '0.7rem' }}
+              />
+            ))}
         {entry.retired && <Chip size="small" label="retired" color="default" />}
         <span className={classes.meta}>
           unit: {entry.unit || '—'} · source: {entry.source || '—'} ·{' '}
